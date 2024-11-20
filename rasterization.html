@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="English">
+<head>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+        .controls {
+            width: 300px;
+            padding: 20px;
+            background: #f0f0f0;
+            border-radius: 8px;
+        }
+        .grid-container {
+            position: relative;
+        }
+        .grid-canvas {
+            border: 1px solid #ccc;
+        }
+        .vertex-item {
+            margin: 8px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .vertex-button {
+            padding: 4px 8px;
+            cursor: grab;
+        }
+        .vertex-coords {
+            display: flex;
+            gap: 8px;
+        }
+        .vertex-coords input {
+            width: 60px;
+        }
+        .triangle-target {
+            min-height: 40px;
+            border: 2px dashed #666;
+            margin: 10px 0;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .triangle-list {
+            margin-top: 10px;
+        }
+        .triangle-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 5px 0;
+        }
+        .color-picker {
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="controls">
+        <div>
+            <label>Image Size:</label>
+            <input type="number" id="sizeX" value="20" min="1" max="100">
+            <input type="number" id="sizeY" value="20" min="1" max="100">
+        </div>
+        <div>
+            <label>Grid Size:</label>
+            <input type="range" id="gridSize" min="20" max="100" value="50">
+        </div>
+
+        <div class="color-picker">
+            <label>Triangle Color:</label>
+            <input type="color" id="triangleColor" value="#008080">
+        </div>
+
+        <h3>Vertices</h3>
+        <button id="addVertex">Add vertex</button>
+        <div id="vertexList"></div>
+
+        <h3>Triangles</h3>
+        <div id="triangleTarget" class="triangle-target">Drop vertices here</div>
+        <div id="triangleList" class="triangle-list"></div>
+    </div>
+
+    <div class="grid-container">
+        <canvas id="gridCanvas" class="grid-canvas"></canvas>
+    </div>
+</div>
+
+<script>
+    // Vertex and index buffers
+    let vertexBuffer = [];
+    let indexBuffer = [];
+    let triangleColors = []; // Array to store colors for each triangle
+
+    // Canvas and context
+    const canvas = document.getElementById('gridCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // UI elements
+    const sizeXInput = document.getElementById('sizeX');
+    const sizeYInput = document.getElementById('sizeY');
+    const gridSizeInput = document.getElementById('gridSize');
+    const vertexList = document.getElementById('vertexList');
+    const triangleTarget = document.getElementById('triangleTarget');
+    const triangleList = document.getElementById('triangleList');
+    const triangleColor = document.getElementById('triangleColor');
+
+    function evaluateEdge(point, vertex, edge) {
+        return (point.x - vertex.x) * edge.y - (point.y - vertex.y) * edge.x;
+    }
+
+    function rasterizeTriangle(v0, v1, v2, e0, e1, e2, boundMin, boundMax) {
+        const pixels = [];
+
+        for (let x = Math.floor(boundMin.x); x <= Math.ceil(boundMax.x); x++) {
+            for (let y = Math.floor(boundMin.y); y <= Math.ceil(boundMax.y); y++) {
+                const point = {x: x + 0.5, y: y + 0.5};
+
+                if (evaluateEdge(point, v0, e0) <= 0 &&
+                    evaluateEdge(point, v1, e1) <= 0 &&
+                    evaluateEdge(point, v2, e2) <= 0) {
+                    pixels.push({x, y});
+                }
+            }
+        }
+
+        return pixels;
+    }
+
+    function render() {
+        const imageWidth = parseInt(sizeXInput.value);
+        const imageHeight = parseInt(sizeYInput.value);
+        const gridSize = parseInt(gridSizeInput.value);
+
+        // Set canvas size
+        canvas.width = imageWidth * gridSize;
+        canvas.height = imageHeight * gridSize;
+
+        // Clear canvas
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Rasterize triangles
+        for (let i = 0; i < indexBuffer.length; i += 3) {
+            const triangleIndex = Math.floor(i / 3);
+            const v0 = vertexBuffer[indexBuffer[i]];
+            const v1 = vertexBuffer[indexBuffer[i + 1]];
+            const v2 = vertexBuffer[indexBuffer[i + 2]];
+
+            if (!v0 || !v1 || !v2) continue;
+
+            const e0 = {x: v1.x - v0.x, y: v1.y - v0.y};
+            const e1 = {x: v2.x - v1.x, y: v2.y - v1.y};
+            const e2 = {x: v0.x - v2.x, y: v0.y - v2.y};
+
+            const boundMin = {
+                x: Math.min(v0.x, Math.min(v1.x, v2.x)),
+                y: Math.min(v0.y, Math.min(v1.y, v2.y))
+            };
+
+            const boundMax = {
+                x: Math.max(v0.x, Math.max(v1.x, v2.x)),
+                y: Math.max(v0.y, Math.max(v1.y, v2.y))
+            };
+
+            const pixels = rasterizeTriangle(v0, v1, v2, e0, e1, e2, boundMin, boundMax, imageWidth);
+
+            ctx.fillStyle = triangleColors[triangleIndex] || '#008080';
+            pixels.forEach(pixel => {
+                ctx.fillRect(pixel.x * gridSize, pixel.y * gridSize, gridSize, gridSize);
+            });
+
+            ctx.beginPath();
+            ctx.moveTo(v0.x * gridSize, v0.y * gridSize);
+            ctx.lineTo(v1.x * gridSize, v1.y * gridSize);
+            ctx.lineTo(v2.x * gridSize, v2.y * gridSize);
+            ctx.lineTo(v0.x * gridSize, v0.y * gridSize);
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+
+        // Draw grid
+        ctx.strokeStyle = '#ccc';
+        ctx.lineWidth = 1;
+
+        for (let x = 0; x <= imageWidth; x++) {
+            ctx.beginPath();
+            ctx.moveTo(x * gridSize, 0);
+            ctx.lineTo(x * gridSize, canvas.height);
+            ctx.stroke();
+        }
+
+        for (let y = 0; y <= imageHeight; y++) {
+            ctx.beginPath();
+            ctx.moveTo(0, y * gridSize);
+            ctx.lineTo(canvas.width, y * gridSize);
+            ctx.stroke();
+        }
+
+        const vertexRadius = gridSize / 3;
+
+        vertexBuffer.forEach((vertex) => {
+            ctx.beginPath();
+            ctx.arc(
+                vertex.x * gridSize,
+                vertex.y * gridSize,
+                vertexRadius,
+                0,
+                2 * Math.PI
+            );
+            ctx.fillStyle = "rgba(255, 0, 0, 0.8)";
+            ctx.fill();
+            ctx.strokeStyle = "darkred";
+            ctx.stroke();
+        });
+    }
+
+    function updateVertexList() {
+        vertexList.innerHTML = '';
+        vertexBuffer.forEach((vertex, i) => {
+            const div = document.createElement('div');
+            div.className = 'vertex-item';
+
+            const button = document.createElement('button');
+            button.className = 'vertex-button';
+            button.draggable = true;
+            button.textContent = `v${i}`;
+            button.ondragstart = (e) => {
+                e.dataTransfer.setData('text/plain', i.toString());
+            };
+
+            const coords = document.createElement('div');
+            coords.className = 'vertex-coords';
+
+            const xInput = document.createElement('input');
+            xInput.type = 'number';
+            xInput.value = vertex.x;
+            xInput.min = 0;
+            xInput.max = Math.max(parseInt(sizeXInput.value), parseInt(sizeYInput.value));
+            xInput.step = 0.1;
+            xInput.onchange = (e) => {
+                vertex.x = parseFloat(e.target.value);
+                render();
+            };
+
+            const yInput = document.createElement('input');
+            yInput.type = 'number';
+            yInput.value = vertex.y;
+            yInput.min = 0;
+            yInput.max = Math.max(parseInt(sizeXInput.value), parseInt(sizeYInput.value));
+            yInput.step = 0.1;
+            yInput.onchange = (e) => {
+                vertex.y = parseFloat(e.target.value);
+                render();
+            };
+
+            coords.appendChild(xInput);
+            coords.appendChild(yInput);
+
+            div.appendChild(button);
+            div.appendChild(coords);
+            vertexList.appendChild(div);
+        });
+    }
+
+    function updateTriangleList() {
+        triangleList.innerHTML = '';
+        for (let i = 0; i < indexBuffer.length; i += 3) {
+            const triangleIndex = Math.floor(i / 3);
+            const div = document.createElement('div');
+            div.className = 'triangle-item';
+
+            const text = document.createElement('span');
+            text.textContent = `v${indexBuffer[i]}, v${indexBuffer[i + 1]}, v${indexBuffer[i + 2]}`;
+
+            const colorPicker = document.createElement('input');
+            colorPicker.type = 'color';
+            colorPicker.value = triangleColors[triangleIndex] || '#008080';
+            colorPicker.onchange = (e) => {
+                triangleColors[triangleIndex] = e.target.value;
+                render();
+            };
+
+            div.appendChild(text);
+            div.appendChild(colorPicker);
+            triangleList.appendChild(div);
+        }
+    }
+
+    // Event listeners
+    document.getElementById('addVertex').onclick = () => {
+        vertexBuffer.push({x: 0, y: 0});
+        updateVertexList();
+        render();
+    };
+
+    triangleTarget.ondragover = (e) => {
+        e.preventDefault();
+    };
+
+    triangleTarget.ondrop = (e) => {
+        e.preventDefault();
+        const vertexIndex = parseInt(e.dataTransfer.getData('text/plain'));
+        indexBuffer.push(vertexIndex);
+
+        // When creating a new triangle (every 3 vertices)
+        if (indexBuffer.length % 3 === 0) {
+            const triangleIndex = (indexBuffer.length / 3) - 1;
+            triangleColors[triangleIndex] = triangleColor.value;
+        }
+
+        updateTriangleList();
+        render();
+    };
+
+    [sizeXInput, sizeYInput, gridSizeInput].forEach(input => {
+        input.onchange = () => {
+            render();
+        };
+    });
+
+    // Initial render
+    render();
+</script>
+</body>
+</html>
